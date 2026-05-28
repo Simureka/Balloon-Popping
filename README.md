@@ -11,10 +11,8 @@
 ## Start a local web server (required — won't work as a double-clicked file)
 
 1. Open a terminal (Git Bash, PowerShell, or Command Prompt).
-2. Change to the game folder:
-cd /c/Users/gburke/Claude_projects/balloon-game
-3. Start a local server on port 8000:
-python -m http.server 8000
+2. Change to the game folder: cd /c/balloon-game
+3. Start a local server on port 8000: python -m http.server 8000
 3. You'll see Serving HTTP on :: port 8000 .... Leave this terminal open while you play.
 
 3. If python isn't found, try py -m http.server 8000 (Windows launcher) or use Node: npx http-server -p 8000.
