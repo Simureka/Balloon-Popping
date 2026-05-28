@@ -1,4 +1,4 @@
-# Balloon Popping Game
+# Balloon Popping Game 🎈
 
 ## Launching the Balloon Pop Game — Step by Step
 
