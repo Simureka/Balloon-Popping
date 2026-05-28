@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Balloon Pop — Hand Tracking</title>
+<style>
+  :root {
+    --bg1: #0f2027;
+    --bg2: #203a43;
+    --bg3: #2c5364;
+    --accent: #ffd166;
+    --accent2: #ef476f;
+    --good: #06d6a0;
+    --text: #f7f7f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+  html, body { width: 100%; height: 100%; overflow: hidden; color: var(--text);
+    background: linear-gradient(135deg, var(--bg1), var(--bg2), var(--bg3)); }
+  .screen {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center; flex-direction: column;
+    padding: 24px; text-align: center;
+  }
+  .screen.active { display: flex; }
+  h1 { font-size: 48px; margin-bottom: 8px; color: var(--accent); text-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  h2 { font-size: 28px; margin-bottom: 16px; color: var(--accent); }
+  p { font-size: 16px; margin-bottom: 12px; opacity: .9; }
+  .panel {
+    background: rgba(0,0,0,.35); backdrop-filter: blur(8px);
+    padding: 32px 40px; border-radius: 18px; max-width: 640px; width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  input, select, button {
+    font-size: 16px; padding: 12px 18px; border-radius: 10px;
+    border: none; outline: none; margin: 6px;
+  }
+  input, select { background: rgba(255,255,255,.12); color: var(--text); border: 1px solid rgba(255,255,255,.25); width: 100%; }
+  select { background-color: #1a2a35; cursor: pointer; }
+  select option { background: #1a2a35; color: #f7f7f7; padding: 8px; }
+  input::placeholder { color: rgba(255,255,255,.6); }
+  .warn-banner { background: rgba(239,71,111,.25); border: 1px solid var(--accent2);
+                 padding: 10px 14px; border-radius: 10px; margin: 10px 0; font-size: 14px;
+                 text-align: left; }
+  .continue-banner { background: rgba(6,214,160,.18); border: 1px solid var(--good);
+                     padding: 14px; border-radius: 12px; margin: 12px 0; }
+  .continue-banner button { background: var(--good); color: #082b22; font-size: 17px; padding: 12px 22px; }
+  button {
+    background: var(--accent); color: #222; font-weight: 600; cursor: pointer;
+    transition: transform .1s, box-shadow .15s;
+  }
+  button:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(255,209,102,.3); }
+  button.secondary { background: rgba(255,255,255,.15); color: var(--text); }
+  button.danger { background: var(--accent2); color: white; }
+  .row { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+  .profile-list { max-height: 220px; overflow-y: auto; margin: 12px 0; }
+  .profile-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; margin: 4px 0; background: rgba(255,255,255,.08); border-radius: 8px;
+  }
+  .profile-item .info { text-align: left; }
+  .profile-item .name { font-weight: 600; }
+  .profile-item .stats { font-size: 13px; opacity: .75; }
+  .profile-item button { padding: 6px 12px; font-size: 14px; margin: 0 2px; }
+
+  #game-screen { padding: 0; }
+  #video { position: absolute; inset: 0; width: 100%; height: 100%;
+           object-fit: cover; transform: scaleX(-1); opacity: .55; }
+  #game-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0; padding: 14px 22px;
+    display: flex; justify-content: space-between; align-items: center;
+    background: linear-gradient(180deg, rgba(0,0,0,.55), transparent);
+    z-index: 5; font-size: 18px; font-weight: 600;
+  }
+  #hud .stat { background: rgba(0,0,0,.4); padding: 6px 14px; border-radius: 20px; }
+  #game-controls {
+    position: absolute; top: 12px; right: 12px; z-index: 6;
+    display: flex; gap: 8px;
+  }
+  #game-controls button { padding: 8px 14px; font-size: 14px; margin: 0; }
+  .pregame-instruction {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 30px; font-weight: 700; color: var(--text);
+    text-shadow: 0 4px 18px rgba(0,0,0,.7);
+    background: rgba(0,0,0,.45); padding: 16px 30px; border-radius: 18px;
+    z-index: 6; pointer-events: none; text-align: center; max-width: 80vw;
+  }
+  .pregame-instruction .sub { display:block; font-size: 16px; opacity: .85; margin-top: 6px; font-weight: 400; }
+  #status-banner {
+    position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,.6); padding: 6px 14px; border-radius: 12px;
+    font-size: 13px; z-index: 5;
+  }
+  .leaderboard-table {
+    width: 100%; border-collapse: collapse; margin-top: 12px;
+  }
+  .leaderboard-table th, .leaderboard-table td {
+    padding: 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.1);
+  }
+  .leaderboard-table th { color: var(--accent); font-size: 14px; }
+  .leaderboard-table tr.you { background: rgba(255,209,102,.15); }
+  .level-up {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 72px; font-weight: 800; color: var(--accent);
+    text-shadow: 0 6px 30px rgba(0,0,0,.7);
+    pointer-events: none; z-index: 7;
+    animation: levelup 1.8s ease-out forwards;
+  }
+  @keyframes levelup {
+    0% { opacity: 0; transform: scale(.5); }
+    25% { opacity: 1; transform: scale(1.1); }
+    75% { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1.3); }
+  }
+  .help-text { font-size: 13px; opacity: .65; margin-top: 14px; }
+  .big-score { font-size: 56px; color: var(--accent); margin: 12px 0; font-weight: 800; }
+  .loading { color: var(--accent); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+</style>
+</head>
+<body>
+
+<!-- ============ PROFILE SCREEN ============ -->
+<div id="profile-screen" class="screen active">
+  <div class="panel">
+    <h1>🎈 Balloon Pop</h1>
+    <p>Pop balloons with your hand — track via webcam.</p>
+
+    <div id="protocol-warning" class="warn-banner" style="display:none;">
+      ⚠ The page was opened with <b>file://</b> — Chrome and Edge will block camera access here.
+      Serve it over <code>http://localhost</code> instead (run <code>python -m http.server</code> in the file's folder).
+    </div>
+
+    <div id="continue-section" class="continue-banner" style="display:none;">
+      <div style="opacity:.85; font-size:14px; margin-bottom:8px;">Last player on this device</div>
+      <button id="continue-btn">▶ Continue as <span id="continue-name"></span></button>
+    </div>
+
+    <h2 style="margin-top: 20px;">Choose a player</h2>
+    <div id="profile-list" class="profile-list"></div>
+
+    <div style="margin-top: 12px;">
+      <input type="text" id="new-profile-name" placeholder="New player name" maxlength="20" />
+      <div class="row">
+        <button id="create-profile-btn">Create Profile</button>
+        <button id="show-leaderboard-btn" class="secondary">Leaderboard</button>
+      </div>
+      <div class="row" style="margin-top: 14px;">
+        <button id="reset-all-btn" class="danger" style="font-size:13px; padding:8px 14px;">Reset All Data</button>
+      </div>
+    </div>
+    <p class="help-text">Profiles are saved in this browser only.</p>
+  </div>
+</div>
+
+<!-- ============ CAMERA SCREEN ============ -->
+<div id="camera-screen" class="screen">
+  <div class="panel">
+    <h1>📷 Pick a camera</h1>
+    <p id="camera-welcome">Choose which webcam to use.</p>
+
+    <select id="camera-select" style="margin-top: 14px;"></select>
+
+    <div class="row" style="margin-top: 18px;">
+      <button id="refresh-cameras-btn" class="secondary">Refresh List</button>
+      <button id="start-game-btn">Start Game ▶</button>
+      <button id="back-to-profile-btn" class="secondary">Back</button>
+    </div>
+    <p class="help-text">First time? Your browser will ask for camera permission. Allow it, then click Refresh.</p>
+    <p id="camera-error" style="color: var(--accent2); margin-top: 10px;"></p>
+  </div>
+</div>
+
+<!-- ============ GAME SCREEN ============ -->
+<div id="game-screen" class="screen">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="game-canvas"></canvas>
+  <div id="hud">
+    <div class="stat" id="hud-score">Score: 0</div>
+    <div class="stat" id="hud-level">Level: 1</div>
+    <div class="stat" id="hud-lives">❤❤❤</div>
+    <div class="stat" id="hud-player">Player</div>
+  </div>
+  <div id="game-controls">
+    <button id="skip-btn" class="secondary" style="display:none;">Skip ▶</button>
+    <button id="sound-btn" class="secondary" title="Toggle sound">🔊</button>
+    <button id="pause-btn" class="secondary">⏸ Pause</button>
+  </div>
+  <div id="status-banner" class="loading">Loading hand tracker…</div>
+  <div id="pregame-text" class="pregame-instruction" style="display:none;"></div>
+</div>
+
+<!-- ============ GAME OVER SCREEN ============ -->
+<div id="gameover-screen" class="screen">
+  <div class="panel">
+    <h1>Game Over</h1>
+    <div class="big-score" id="final-score">0</div>
+    <p id="final-stats"></p>
+    <p id="new-high-banner" style="color: var(--good); display:none; font-weight:600;">🏆 New Personal Best!</p>
+    <div class="row" style="margin-top: 20px;">
+      <button id="play-again-btn">Play Again</button>
+      <button id="change-camera-btn" class="secondary">Change Camera</button>
+      <button id="change-player-btn" class="secondary">Change Player</button>
+      <button id="view-leaderboard-btn" class="secondary">Leaderboard</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ LEADERBOARD SCREEN ============ -->
+<div id="leaderboard-screen" class="screen">
+  <div class="panel">
+    <h1>🏆 Leaderboard</h1>
+    <table class="leaderboard-table">
+      <thead><tr><th>#</th><th>Player</th><th>High Score</th><th>Top Level</th><th>Games</th><th></th></tr></thead>
+      <tbody id="leaderboard-body"></tbody>
+    </table>
+    <div class="row" style="margin-top: 18px;">
+      <button id="leaderboard-back-btn">Back</button>
+      <button id="leaderboard-reset-btn" class="danger" style="font-size:13px; padding:8px 14px;">Reset All Data</button>
+    </div>
+  </div>
+</div>
+
+<!-- MediaPipe Hands (loaded from CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script>
+"use strict";
+
+// ============================================================
+//  STORAGE — profiles in localStorage
+// ============================================================
+const STORAGE_KEY = 'balloon_pop_profiles_v1';
+const SETTINGS_KEY = 'balloon_pop_settings_v1';
+
+function loadProfiles() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+  catch { return []; }
+}
+function saveProfiles(p) { localStorage.setItem(STORAGE_KEY, JSON.stringify(p)); }
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; }
+  catch { return {}; }
+}
+function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
+
+// ============================================================
+//  STATE
+// ============================================================
+const state = {
+  profile: null,         // current player profile object
+  cameraId: null,        // selected device id
+  mediaStream: null,
+  hands: null,           // MediaPipe Hands instance
+  camera: null,          // MediaPipe Camera helper
+  handPoints: [],        // list of {x,y,kind} normalized 0..1, mirrored
+  fistClosed: false,     // whether the hand is closed (used as 'punch' marker)
+  game: null,            // active game object
+};
+
+// ============================================================
+//  SCREEN ROUTING
+// ============================================================
+const screens = ['profile-screen','camera-screen','game-screen','gameover-screen','leaderboard-screen'];
+function show(name) {
+  for (const id of screens) {
+    document.getElementById(id).classList.toggle('active', id === name);
+  }
+}
+
+// ============================================================
+//  PROFILE UI
+// ============================================================
+function renderProfiles() {
+  const list = document.getElementById('profile-list');
+  const profiles = loadProfiles();
+  if (profiles.length === 0) {
+    list.innerHTML = '<p style="opacity:.6;">No players yet. Create one below.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  profiles.sort((a,b) => b.highScore - a.highScore);
+  for (const p of profiles) {
+    const div = document.createElement('div');
+    div.className = 'profile-item';
+    div.innerHTML = `
+      <div class="info">
+        <div class="name">${escapeHtml(p.name)}</div>
+        <div class="stats">High: ${p.highScore} • Level: ${p.topLevel} • Games: ${p.gamesPlayed}</div>
+      </div>
+      <div>
+        <button data-action="select" data-name="${escapeHtml(p.name)}">Play</button>
+        <button data-action="delete" data-name="${escapeHtml(p.name)}" class="danger">✕</button>
+      </div>`;
+    list.appendChild(div);
+  }
+  list.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.name;
+      const action = btn.dataset.action;
+      if (action === 'select') selectProfile(name);
+      if (action === 'delete') {
+        if (confirm(`Delete player "${name}"? Their scores will be lost.`)) {
+          saveProfiles(loadProfiles().filter(x => x.name !== name));
+          const settings = loadSettings();
+          if (settings.lastProfile === name) {
+            delete settings.lastProfile;
+            saveSettings(settings);
+          }
+          renderProfiles();
+          renderContinueBanner();
+        }
+      }
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function createProfile() {
+  const input = document.getElementById('new-profile-name');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  const profiles = loadProfiles();
+  if (profiles.find(p => p.name === name)) {
+    alert('A player with that name already exists.');
+    return;
+  }
+  const profile = { name, highScore: 0, topLevel: 1, gamesPlayed: 0, createdAt: Date.now() };
+  profiles.push(profile);
+  saveProfiles(profiles);
+  input.value = '';
+  selectProfile(name);
+}
+
+function selectProfile(name) {
+  const profile = loadProfiles().find(p => p.name === name);
+  if (!profile) return;
+  state.profile = profile;
+  saveSettings({ ...loadSettings(), lastProfile: name });
+  document.getElementById('camera-welcome').textContent =
+    `Welcome, ${profile.name}! Pick a camera to use.`;
+  show('camera-screen');
+  enumerateCameras();
+}
+
+function renderContinueBanner() {
+  const settings = loadSettings();
+  const section = document.getElementById('continue-section');
+  const last = settings.lastProfile && loadProfiles().find(p => p.name === settings.lastProfile);
+  if (last) {
+    document.getElementById('continue-name').textContent = last.name;
+    section.style.display = 'block';
+    section.dataset.name = last.name;
+  } else {
+    section.style.display = 'none';
+  }
+}
+
+function resetAllData() {
+  if (!confirm('This deletes ALL players, scores, and camera settings on this device. Continue?')) return;
+  if (!confirm('Are you sure? This cannot be undone.')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(SETTINGS_KEY);
+  state.profile = null;
+  renderProfiles();
+  renderContinueBanner();
+  show('profile-screen');
+}
+
+// ============================================================
+//  CAMERA ENUMERATION
+// ============================================================
+async function enumerateCameras() {
+  const sel = document.getElementById('camera-select');
+  const err = document.getElementById('camera-error');
+  err.textContent = '';
+  sel.innerHTML = '<option value="">Loading cameras…</option>';
+
+  // Hard fail #1: insecure context (file://) — getUserMedia is unavailable
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    sel.innerHTML = '<option value="">— camera API unavailable —</option>';
+    err.innerHTML = 'This browser exposes no camera API on this page. ' +
+      'If you opened the file by double-clicking, the URL bar shows <code>file://</code> — ' +
+      'Chrome/Edge block the camera there. Serve over <code>http://localhost</code> instead.';
+    return;
+  }
+
+  // Step 1: open a temp stream so device labels are populated.
+  // Keep the stream alive until AFTER enumerateDevices, then stop it.
+  let tmpStream = null;
+  try {
+    tmpStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  } catch (e) {
+    err.textContent = `Cannot access camera (${e.name}): ${e.message}. ` +
+      'Check that no other app (Zoom, Teams, Skype) is using the camera, ' +
+      'and that the browser has permission for this site.';
+    // continue anyway — devices may still enumerate without labels
+  }
+
+  let cams = [];
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    cams = devices.filter(d => d.kind === 'videoinput');
+  } catch (e) {
+    err.textContent = 'Could not enumerate devices: ' + e.message;
+  } finally {
+    if (tmpStream) tmpStream.getTracks().forEach(t => t.stop());
+  }
+
+  sel.innerHTML = '';
+  if (cams.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = ''; opt.textContent = '— no cameras detected —';
+    sel.appendChild(opt);
+    if (!err.textContent) err.textContent = 'No video input devices were found on this machine.';
+    return;
+  }
+
+  const settings = loadSettings();
+  cams.forEach((c, i) => {
+    const opt = document.createElement('option');
+    opt.value = c.deviceId;
+    const label = c.label || `Camera ${i+1} (label hidden — grant camera permission)`;
+    const isBuiltIn = /integrated|internal|built[\s-]?in|facetime|webcam/i.test(label) &&
+                      !/usb|external/i.test(label);
+    const tag = c.label ? (isBuiltIn ? ' (built-in)' : ' (external)') : '';
+    opt.textContent = label + tag;
+    sel.appendChild(opt);
+  });
+  if (settings.cameraId && cams.find(c => c.deviceId === settings.cameraId)) {
+    sel.value = settings.cameraId;
+  }
+}
+
+// ============================================================
+//  START / STOP CAMERA + HANDS
+// ============================================================
+async function startCameraAndHands() {
+  const sel = document.getElementById('camera-select');
+  const deviceId = sel.value;
+  if (!deviceId) { alert('Pick a camera first.'); return false; }
+  state.cameraId = deviceId;
+  saveSettings({ ...loadSettings(), cameraId: deviceId });
+
+  const video = document.getElementById('video');
+  try {
+    if (state.mediaStream) state.mediaStream.getTracks().forEach(t => t.stop());
+    state.mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: deviceId }, width: 1280, height: 720 },
+      audio: false
+    });
+    video.srcObject = state.mediaStream;
+    await new Promise(res => video.onloadedmetadata = res);
+    await video.play();
+  } catch (e) {
+    alert('Could not start camera: ' + e.message);
+    return false;
+  }
+
+  // MediaPipe Hands
+  if (!state.hands) {
+    state.hands = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+    });
+    state.hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 0,           // 0 = faster, 1 = more accurate
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.5
+    });
+    state.hands.onResults(onHandResults);
+  }
+
+  // Stop any prior camera helper, start a new one bound to this video
+  if (state.camera) { state.camera.stop(); state.camera = null; }
+  state.camera = new Camera(video, {
+    onFrame: async () => { await state.hands.send({ image: video }); },
+    width: 640, height: 480
+  });
+  state.camera.start();
+  return true;
+}
+
+function onHandResults(results) {
+  const pts = [];
+  let fist = false;
+  if (results.multiHandLandmarks) {
+    for (let h = 0; h < results.multiHandLandmarks.length; h++) {
+      const lm = results.multiHandLandmarks[h];
+      // landmark 8 = index fingertip, 4 = thumb tip, 12 = middle tip
+      // We push fingertip plus the palm centroid as hit points.
+      const tip = lm[8];
+      const middle = lm[12];
+      const palm = lm[9];
+      pts.push({ x: 1 - tip.x, y: tip.y, kind: 'tip' });    // mirror x
+      pts.push({ x: 1 - middle.x, y: middle.y, kind: 'tip' });
+      pts.push({ x: 1 - palm.x, y: palm.y, kind: 'palm' });
+
+      // Fist heuristic: all finger tips below their PIP joints (in y)
+      const closedCount = [8,12,16,20].filter(i => lm[i].y > lm[i-2].y).length;
+      if (closedCount >= 3) fist = true;
+    }
+  }
+  state.handPoints = pts;
+  state.fistClosed = fist;
+  if (!state.handsReady) {
+    state.handsReady = true;
+    setBanner('Hand tracker ready', false);
+    setTimeout(() => {
+      // hide banner only if play has begun
+      if (state.game && state.game.phase === 'play') hideBanner();
+    }, 1500);
+  }
+}
+
+// ============================================================
+//  AUDIO  (synthesized via Web Audio — no asset files)
+// ============================================================
+state.sound = true;
+function initAudio() {
+  if (state.audioCtx) return;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    state.audioCtx = new Ctx();
+  } catch (e) { /* ignore */ }
+}
+function playPop(seed = 0) {
+  if (!state.sound || !state.audioCtx) return;
+  const ctx = state.audioCtx;
+  const now = ctx.currentTime;
+  const dur = 0.16;
+  const bufSize = Math.floor(ctx.sampleRate * dur);
+  const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) {
+    const t = i / bufSize;
+    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.2);
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 550 + (seed % 6) * 130;
+  filter.Q.value = 4;
+  const gain = ctx.createGain();
+  gain.gain.value = 0.28;
+  src.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+  src.start(now);
+}
+function playLevelUp() {
+  if (!state.sound || !state.audioCtx) return;
+  const ctx = state.audioCtx;
+  const now = ctx.currentTime;
+  [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'triangle';
+    o.frequency.value = f;
+    o.connect(g); g.connect(ctx.destination);
+    const t = now + i * 0.08;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.18, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    o.start(t); o.stop(t + 0.22);
+  });
+}
+function playLoseLife() {
+  if (!state.sound || !state.audioCtx) return;
+  const ctx = state.audioCtx;
+  const now = ctx.currentTime;
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(260, now);
+  o.frequency.exponentialRampToValueAtTime(70, now + 0.35);
+  g.gain.setValueAtTime(0.22, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(now); o.stop(now + 0.36);
+}
+function playGameOver() {
+  if (!state.sound || !state.audioCtx) return;
+  const ctx = state.audioCtx;
+  const now = ctx.currentTime;
+  [392, 349.23, 329.63, 261.63].forEach((f, i) => {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'triangle';
+    o.frequency.value = f;
+    o.connect(g); g.connect(ctx.destination);
+    const t = now + i * 0.14;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.2, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.start(t); o.stop(t + 0.32);
+  });
+}
+
+// ============================================================
+//  PREGAME helpers (calibration + wave-to-start)
+// ============================================================
+function setPregameText(html) {
+  const el = document.getElementById('pregame-text');
+  if (!el) return;
+  if (!html) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = html;
+}
+function setBanner(text, loading=false) {
+  const b = document.getElementById('status-banner');
+  if (!b) return;
+  b.style.display = 'block';
+  b.classList.toggle('loading', loading);
+  b.textContent = text;
+}
+function hideBanner() {
+  const b = document.getElementById('status-banner');
+  if (b) b.style.display = 'none';
+}
+
+function initCalibration(g) {
+  g.calibration = {
+    targets: [
+      { x: 0.12, y: 0.22, hit: false, progress: 0 },
+      { x: 0.88, y: 0.22, hit: false, progress: 0 },
+      { x: 0.12, y: 0.78, hit: false, progress: 0 },
+      { x: 0.88, y: 0.78, hit: false, progress: 0 },
+    ],
+    holdTime: 0.5,
+  };
+}
+
+function updateCalibration(g, dt, w, h) {
+  let remaining = 0;
+  for (const t of g.calibration.targets) {
+    if (t.hit) continue;
+    remaining++;
+    const tx = t.x * w, ty = t.y * h;
+    const hitR = 60 * devicePixelRatio;
+    const touched = state.handPoints && state.handPoints.some(p => {
+      const dx = p.x * w - tx, dy = p.y * h - ty;
+      return dx*dx + dy*dy < hitR * hitR;
+    });
+    if (touched) {
+      t.progress += dt;
+      if (t.progress >= g.calibration.holdTime) {
+        t.hit = true;
+        playPop(Math.floor(Math.random()*6));
+      }
+    } else {
+      t.progress = Math.max(0, t.progress - dt * 0.4);
+    }
+  }
+  setPregameText(`Calibrate — touch the ${remaining} remaining target${remaining===1?'':'s'}<span class="sub">Hold your hand on each circle for ½ second</span>`);
+  if (remaining === 0) {
+    g.phase = 'wave';
+    g.waveDetector = { samples: [], startTime: performance.now() };
+  }
+}
+
+function drawCalibration(g, ctx, w, h) {
+  for (const t of g.calibration.targets) {
+    const tx = t.x * w, ty = t.y * h;
+    const baseR = 55 * devicePixelRatio;
+    ctx.beginPath();
+    ctx.arc(tx, ty, baseR, 0, Math.PI*2);
+    ctx.strokeStyle = t.hit ? 'rgba(6,214,160,.95)' : 'rgba(255,255,255,.7)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    if (!t.hit && t.progress > 0) {
+      ctx.beginPath();
+      ctx.arc(tx, ty, baseR, -Math.PI/2, -Math.PI/2 + (t.progress/g.calibration.holdTime) * Math.PI*2);
+      ctx.strokeStyle = 'rgba(255,209,102,.95)';
+      ctx.lineWidth = 9;
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(tx, ty, 9, 0, Math.PI*2);
+    ctx.fillStyle = t.hit ? '#06d6a0' : '#ffd166';
+    ctx.fill();
+  }
+}
+
+function updateWave(g, dt, w, h) {
+  setPregameText(`👋 Wave your hand to start!<span class="sub">Side-to-side motion across the screen</span>`);
+  if (!state.handPoints || state.handPoints.length === 0) return;
+  // Track the index-fingertip (first pushed = 'tip')
+  const tip = state.handPoints.find(p => p.kind === 'tip') || state.handPoints[0];
+  const now = performance.now();
+  g.waveDetector.samples.push({ x: tip.x, t: now });
+  g.waveDetector.samples = g.waveDetector.samples.filter(s => now - s.t < 1500);
+  const samples = g.waveDetector.samples;
+  if (samples.length < 4) return;
+  const xs = samples.map(s => s.x);
+  const amp = Math.max(...xs) - Math.min(...xs);
+  const mid = (Math.max(...xs) + Math.min(...xs)) / 2;
+  let crossings = 0, prev = null;
+  for (const s of samples) {
+    const side = s.x > mid ? 1 : -1;
+    if (prev !== null && side !== prev) crossings++;
+    prev = side;
+  }
+  if (crossings >= 3 && amp > 0.25) {
+    g.phase = 'play';
+    g.lastTime = performance.now();
+    g.lastSpawn = performance.now();
+    setPregameText('');
+    hideBanner();
+    document.getElementById('skip-btn').style.display = 'none';
+  }
+}
+
+function skipPregame(g) {
+  g.phase = 'play';
+  g.lastTime = performance.now();
+  g.lastSpawn = performance.now();
+  setPregameText('');
+  hideBanner();
+  document.getElementById('skip-btn').style.display = 'none';
+}
+
+// ============================================================
+//  GAME
+// ============================================================
+const BALLOON_COLORS = ['#ef476f','#ffd166','#06d6a0','#118ab2','#9b5de5','#fb5607'];
+
+function levelConfig(level) {
+  // tune curve: more balloons, faster fall, more spawn rate per level
+  return {
+    maxBalloons: Math.min(3 + Math.floor(level * 0.8), 14),
+    spawnIntervalMs: Math.max(1400 - level * 90, 350),
+    fallSpeedMin: 60 + level * 12,    // px/sec at 720p reference
+    fallSpeedMax: 110 + level * 18,
+    pointsPerBalloon: 10 + level * 2,
+    scoreToNextLevel: 100 + (level - 1) * 80,
+    livesBonus: level % 3 === 0 ? 1 : 0,  // +1 life every 3rd level
+  };
+}
+
+function startGame() {
+  resizeCanvas();
+  state.game = {
+    score: 0,
+    level: 1,
+    lives: 3,
+    scoreAtLevelStart: 0,
+    balloons: [],
+    pops: [],
+    lastSpawn: 0,
+    lastTime: performance.now(),
+    paused: false,
+    over: false,
+    phase: 'calibrate',
+  };
+  initCalibration(state.game);
+  updateHUD();
+  document.getElementById('hud-player').textContent = state.profile.name;
+  document.getElementById('skip-btn').style.display = 'inline-block';
+  document.getElementById('pause-btn').textContent = '⏸ Pause';
+  requestAnimationFrame(gameLoop);
+}
+
+function resizeCanvas() {
+  const canvas = document.getElementById('game-canvas');
+  canvas.width = canvas.clientWidth * devicePixelRatio;
+  canvas.height = canvas.clientHeight * devicePixelRatio;
+}
+window.addEventListener('resize', resizeCanvas);
+
+function spawnBalloon(g, cfg, w) {
+  const r = 38 + Math.random() * 26;
+  g.balloons.push({
+    x: r + Math.random() * (w - 2*r),
+    y: -r,
+    r,
+    vy: cfg.fallSpeedMin + Math.random() * (cfg.fallSpeedMax - cfg.fallSpeedMin),
+    vx: (Math.random() - 0.5) * 30,
+    color: BALLOON_COLORS[Math.floor(Math.random() * BALLOON_COLORS.length)],
+    sway: Math.random() * Math.PI * 2,
+  });
+}
+
+function gameLoop(now) {
+  const g = state.game;
+  if (!g || g.over) return;
+  const canvas = document.getElementById('game-canvas');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+
+  const dt = Math.min(0.05, (now - g.lastTime) / 1000);
+  g.lastTime = now;
+
+  ctx.clearRect(0, 0, w, h);
+
+  if (g.phase === 'calibrate') {
+    updateCalibration(g, dt, w, h);
+    drawCalibration(g, ctx, w, h);
+  } else if (g.phase === 'wave') {
+    updateWave(g, dt, w, h);
+  } else if (g.phase === 'play' && !g.paused) {
+    const cfg = levelConfig(g.level);
+
+    if (now - g.lastSpawn > cfg.spawnIntervalMs && g.balloons.length < cfg.maxBalloons) {
+      spawnBalloon(g, cfg, w);
+      g.lastSpawn = now;
+    }
+
+    const scale = h / 720;
+    for (const b of g.balloons) {
+      b.sway += dt * 2;
+      b.x += (b.vx + Math.sin(b.sway) * 18) * dt * scale;
+      b.y += b.vy * dt * scale;
+      if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx); }
+      if (b.x > w - b.r) { b.x = w - b.r; b.vx = -Math.abs(b.vx); }
+    }
+
+    if (state.handPoints && state.handPoints.length) {
+      for (const p of state.handPoints) {
+        const hx = p.x * w, hy = p.y * h;
+        const hitRadius = p.kind === 'palm' ? 35 * devicePixelRatio : 25 * devicePixelRatio;
+        for (let i = g.balloons.length - 1; i >= 0; i--) {
+          const b = g.balloons[i];
+          const dx = b.x - hx, dy = b.y - hy;
+          if (dx*dx + dy*dy < (b.r + hitRadius) * (b.r + hitRadius)) {
+            popBalloon(g, b, i, cfg);
+          }
+        }
+      }
+    }
+
+    for (let i = g.balloons.length - 1; i >= 0; i--) {
+      if (g.balloons[i].y - g.balloons[i].r > h) {
+        g.balloons.splice(i, 1);
+        g.lives--;
+        playLoseLife();
+        updateHUD();
+        if (g.lives <= 0) { endGame(); return; }
+      }
+    }
+
+    if (g.score - g.scoreAtLevelStart >= cfg.scoreToNextLevel) {
+      g.level++;
+      g.scoreAtLevelStart = g.score;
+      g.lives += levelConfig(g.level).livesBonus;
+      updateHUD();
+      showLevelUp(g.level);
+      playLevelUp();
+    }
+  }
+
+  // pop animations (always)
+  for (let i = g.pops.length - 1; i >= 0; i--) {
+    const p = g.pops[i];
+    p.age += dt;
+    if (p.age > 0.5) g.pops.splice(i, 1);
+  }
+
+  // balloons
+  for (const b of g.balloons) drawBalloon(ctx, b);
+  for (const p of g.pops) drawPop(ctx, p);
+
+  // hand markers (always)
+  if (state.handPoints) {
+    for (const pt of state.handPoints) {
+      ctx.beginPath();
+      ctx.arc(pt.x * w, pt.y * h, pt.kind === 'palm' ? 26 : 14, 0, Math.PI * 2);
+      ctx.fillStyle = pt.kind === 'palm' ? 'rgba(255,209,102,.25)' : 'rgba(255,255,255,.75)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.95)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+function popBalloon(g, b, i, cfg) {
+  g.balloons.splice(i, 1);
+  g.score += cfg.pointsPerBalloon;
+  g.pops.push({ x: b.x, y: b.y, r: b.r, color: b.color, age: 0 });
+  playPop(BALLOON_COLORS.indexOf(b.color));
+  updateHUD();
+}
+
+function drawBalloon(ctx, b) {
+  // string
+  ctx.beginPath();
+  ctx.moveTo(b.x, b.y + b.r);
+  ctx.quadraticCurveTo(b.x + 10, b.y + b.r + 30, b.x, b.y + b.r + 60);
+  ctx.strokeStyle = 'rgba(0,0,0,.45)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // body
+  const grad = ctx.createRadialGradient(b.x - b.r/3, b.y - b.r/3, b.r/6, b.x, b.y, b.r);
+  grad.addColorStop(0, 'rgba(255,255,255,.85)');
+  grad.addColorStop(0.25, b.color);
+  grad.addColorStop(1, shadeColor(b.color, -25));
+  ctx.beginPath();
+  ctx.ellipse(b.x, b.y, b.r * 0.92, b.r, 0, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  // knot
+  ctx.beginPath();
+  ctx.moveTo(b.x - 5, b.y + b.r);
+  ctx.lineTo(b.x + 5, b.y + b.r);
+  ctx.lineTo(b.x, b.y + b.r + 8);
+  ctx.closePath();
+  ctx.fillStyle = shadeColor(b.color, -30);
+  ctx.fill();
+}
+
+function drawPop(ctx, p) {
+  const t = p.age / 0.5;
+  const r = p.r * (1 + t * 1.5);
+  ctx.strokeStyle = p.color;
+  ctx.lineWidth = 5 * (1 - t);
+  ctx.globalAlpha = 1 - t;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  ctx.stroke();
+  // sparkles
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const d = r * 1.1;
+    ctx.beginPath();
+    ctx.arc(p.x + Math.cos(a) * d, p.y + Math.sin(a) * d, 4 * (1 - t), 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function shadeColor(hex, percent) {
+  const h = hex.replace('#','');
+  const num = parseInt(h, 16);
+  let r = (num >> 16) + percent;
+  let g = ((num >> 8) & 0xff) + percent;
+  let b = (num & 0xff) + percent;
+  r = Math.max(0, Math.min(255, r));
+  g = Math.max(0, Math.min(255, g));
+  b = Math.max(0, Math.min(255, b));
+  return `rgb(${r},${g},${b})`;
+}
+
+function updateHUD() {
+  const g = state.game;
+  if (!g) return;
+  document.getElementById('hud-score').textContent = `Score: ${g.score}`;
+  document.getElementById('hud-level').textContent = `Level: ${g.level}`;
+  document.getElementById('hud-lives').textContent = '❤'.repeat(Math.max(0, g.lives)) || '—';
+}
+
+function showLevelUp(level) {
+  const el = document.createElement('div');
+  el.className = 'level-up';
+  el.textContent = `LEVEL ${level}`;
+  document.getElementById('game-screen').appendChild(el);
+  setTimeout(() => el.remove(), 1800);
+}
+
+function endGame() {
+  const g = state.game;
+  g.over = true;
+  // save profile
+  const profiles = loadProfiles();
+  const idx = profiles.findIndex(p => p.name === state.profile.name);
+  const isNewHigh = g.score > state.profile.highScore;
+  if (idx >= 0) {
+    profiles[idx].gamesPlayed++;
+    profiles[idx].highScore = Math.max(profiles[idx].highScore, g.score);
+    profiles[idx].topLevel = Math.max(profiles[idx].topLevel, g.level);
+    saveProfiles(profiles);
+    state.profile = profiles[idx];
+  }
+  document.getElementById('final-score').textContent = g.score;
+  document.getElementById('final-stats').textContent =
+    `Player: ${state.profile.name} • Reached level ${g.level} • Personal best: ${state.profile.highScore}`;
+  document.getElementById('new-high-banner').style.display = isNewHigh ? 'block' : 'none';
+  playGameOver();
+  show('gameover-screen');
+}
+
+// ============================================================
+//  LEADERBOARD
+// ============================================================
+function renderLeaderboard() {
+  const tbody = document.getElementById('leaderboard-body');
+  const profiles = loadProfiles().slice().sort((a,b) => b.highScore - a.highScore);
+  if (profiles.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;opacity:.6;">No players yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  profiles.forEach((p, i) => {
+    const tr = document.createElement('tr');
+    if (state.profile && p.name === state.profile.name) tr.className = 'you';
+    tr.innerHTML = `<td>${i+1}</td><td>${escapeHtml(p.name)}</td><td>${p.highScore}</td><td>${p.topLevel}</td><td>${p.gamesPlayed}</td><td><button class="danger lb-del" data-name="${escapeHtml(p.name)}" style="padding:4px 10px; font-size:13px;">Delete</button></td>`;
+    tbody.appendChild(tr);
+  });
+  tbody.querySelectorAll('.lb-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.name;
+      if (!confirm(`Remove "${name}" from the leaderboard? Their scores will be lost.`)) return;
+      saveProfiles(loadProfiles().filter(p => p.name !== name));
+      const settings = loadSettings();
+      if (settings.lastProfile === name) {
+        delete settings.lastProfile;
+        saveSettings(settings);
+      }
+      renderLeaderboard();
+    });
+  });
+}
+
+// ============================================================
+//  WIRE UP UI
+// ============================================================
+document.addEventListener('DOMContentLoaded', () => {
+  // Protocol warning for file://
+  if (location.protocol === 'file:') {
+    document.getElementById('protocol-warning').style.display = 'block';
+  }
+
+  renderProfiles();
+  renderContinueBanner();
+
+  document.getElementById('continue-btn').addEventListener('click', () => {
+    const name = document.getElementById('continue-section').dataset.name;
+    if (name) selectProfile(name);
+  });
+  document.getElementById('reset-all-btn').addEventListener('click', resetAllData);
+  document.getElementById('leaderboard-reset-btn').addEventListener('click', resetAllData);
+
+  document.getElementById('create-profile-btn').addEventListener('click', createProfile);
+  document.getElementById('new-profile-name').addEventListener('keydown', e => {
+    if (e.key === 'Enter') createProfile();
+  });
+  document.getElementById('show-leaderboard-btn').addEventListener('click', () => {
+    renderLeaderboard();
+    show('leaderboard-screen');
+  });
+  document.getElementById('leaderboard-back-btn').addEventListener('click', () => {
+    show(state.game && state.game.over ? 'gameover-screen' : 'profile-screen');
+  });
+
+  document.getElementById('refresh-cameras-btn').addEventListener('click', enumerateCameras);
+  document.getElementById('back-to-profile-btn').addEventListener('click', () => show('profile-screen'));
+  document.getElementById('start-game-btn').addEventListener('click', async () => {
+    initAudio();  // must happen from a user gesture
+    setBanner('Loading hand tracker…', true);
+    state.handsReady = false;
+    show('game-screen');
+    resizeCanvas();
+    const ok = await startCameraAndHands();
+    if (!ok) { show('camera-screen'); return; }
+    startGame();
+  });
+
+  document.getElementById('pause-btn').addEventListener('click', () => {
+    if (!state.game) return;
+    state.game.paused = !state.game.paused;
+    document.getElementById('pause-btn').textContent = state.game.paused ? '▶ Resume' : '⏸ Pause';
+  });
+
+  document.getElementById('sound-btn').addEventListener('click', () => {
+    state.sound = !state.sound;
+    document.getElementById('sound-btn').textContent = state.sound ? '🔊' : '🔇';
+  });
+  document.getElementById('skip-btn').addEventListener('click', () => {
+    if (state.game && state.game.phase !== 'play') skipPregame(state.game);
+  });
+
+  document.getElementById('play-again-btn').addEventListener('click', () => {
+    show('game-screen');
+    resizeCanvas();
+    startGame();
+  });
+  document.getElementById('change-camera-btn').addEventListener('click', () => {
+    if (state.camera) { state.camera.stop(); state.camera = null; }
+    if (state.mediaStream) { state.mediaStream.getTracks().forEach(t => t.stop()); state.mediaStream = null; }
+    show('camera-screen');
+    enumerateCameras();
+  });
+  document.getElementById('change-player-btn').addEventListener('click', () => {
+    if (state.camera) { state.camera.stop(); state.camera = null; }
+    if (state.mediaStream) { state.mediaStream.getTracks().forEach(t => t.stop()); state.mediaStream = null; }
+    state.profile = null;
+    renderProfiles();
+    show('profile-screen');
+  });
+  document.getElementById('view-leaderboard-btn').addEventListener('click', () => {
+    renderLeaderboard();
+    show('leaderboard-screen');
+  });
+});
+</script>
+</body>
+</html>
