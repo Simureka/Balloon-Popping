@@ -6,7 +6,7 @@
 
 1. A modern browser (Chrome, Edge, or Firefox — Chrome/Edge recommended).
 2. A working webcam, not in use by Zoom/Teams/Skype.
-3. Python installed (almost certainly already there on your machine). Verify with python --version in a terminal.
+3. Python installed
 
 ## Start a local web server (required — won't work as a double-clicked file)
 
