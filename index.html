@@ -14,8 +14,10 @@
     --text: #f7f7f7;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
-  html, body { width: 100%; height: 100%; overflow: hidden; color: var(--text);
-    background: linear-gradient(135deg, var(--bg1), var(--bg2), var(--bg3)); }
+  html, body { width: 100%; height: 100%; overflow: hidden; color: var(--text); }
+  body { background: linear-gradient(135deg, var(--bg1), var(--bg2), var(--bg3));
+         transition: background 0.4s ease; }
+  #video { transition: filter 0.4s ease; }
   .screen {
     position: absolute; inset: 0; display: none;
     align-items: center; justify-content: center; flex-direction: column;
@@ -64,7 +66,9 @@
 
   #game-screen { padding: 0; }
   #video { position: absolute; inset: 0; width: 100%; height: 100%;
-           object-fit: cover; transform: scaleX(-1); opacity: .55; }
+           object-fit: cover; transform: scaleX(-1); opacity: .55;
+           transition: opacity 0.3s ease; }
+  #bg-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
   #game-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   #hud {
     position: absolute; top: 0; left: 0; right: 0; padding: 14px 22px;
@@ -161,6 +165,51 @@
 
     <select id="camera-select" style="margin-top: 14px;"></select>
 
+    <div style="text-align:left; margin-top: 14px;">
+      <label style="font-size:14px; opacity:.85;">Tracking quality:</label>
+      <select id="quality-select" style="margin-top: 6px;">
+        <option value="fast">Fast (close-up on laptop)</option>
+        <option value="smooth" selected>Smooth (recommended for TV / distant hand)</option>
+        <option value="accurate">Accurate (slowest, most precise)</option>
+      </select>
+    </div>
+
+    <div style="text-align:left; margin-top: 14px;">
+      <label style="font-size:14px; opacity:.85;">Theme:</label>
+      <select id="theme-select" style="margin-top: 6px;">
+        <option value="default">Default — Dark Blue</option>
+        <option value="bluey">🐶 Bluey (blue / orange)</option>
+        <option value="hellokitty">🎀 Hello Kitty (pink / red)</option>
+        <option value="peppa">🐷 Peppa Pig (pink / grass)</option>
+        <option value="pawpatrol">🚓 Paw Patrol (red / blue / yellow)</option>
+        <option value="squishmallow">🌈 Squishmallow (pastel)</option>
+      </select>
+    </div>
+
+    <div style="text-align:left; margin-top: 14px;">
+      <label style="font-size:14px; opacity:.85;">Background (hide your room):</label>
+      <select id="bg-select" style="margin-top: 6px;">
+        <option value="off" selected>Off — show camera as-is</option>
+        <option value="blur">Blur my background</option>
+        <option value="themed">Themed wallpaper</option>
+        <option value="solid">Solid color</option>
+        <option value="custom">Upload my own image…</option>
+      </select>
+      <div id="bg-extra" style="margin-top: 8px; display:flex; gap:8px; align-items:center;">
+        <input type="color" id="bg-color" value="#306b9a" style="display:none; width: 60px; height: 38px; padding: 2px;" />
+        <input type="file" id="bg-file" accept="image/*" style="display:none; flex:1;" />
+        <span id="bg-file-name" style="font-size:13px; opacity:.7;"></span>
+      </div>
+      <div id="bg-edge-row" style="margin-top: 10px;">
+        <label style="font-size:13px; opacity:.8;">Edge quality:</label>
+        <select id="bg-edge-select" style="margin-top: 4px;">
+          <option value="fast" selected>Fast (landscape model)</option>
+          <option value="sharp">Sharp (general model — slower, crisper hair/shoulders)</option>
+        </select>
+      </div>
+      <p class="help-text" style="margin-top: 6px;">Uses MediaPipe Selfie Segmentation with a small mask-feather pass. Adds noticeable CPU load — drop Tracking quality to Fast if needed.</p>
+    </div>
+
     <div class="row" style="margin-top: 18px;">
       <button id="refresh-cameras-btn" class="secondary">Refresh List</button>
       <button id="start-game-btn">Start Game ▶</button>
@@ -174,6 +223,7 @@
 <!-- ============ GAME SCREEN ============ -->
 <div id="game-screen" class="screen">
   <video id="video" autoplay playsinline muted></video>
+  <canvas id="bg-canvas"></canvas>
   <canvas id="game-canvas"></canvas>
   <div id="hud">
     <div class="stat" id="hud-score">Score: 0</div>
@@ -222,9 +272,12 @@
   </div>
 </div>
 
-<!-- MediaPipe Hands (loaded from CDN) -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<!-- MediaPipe Hands (loaded from CDN). camera_utils is intentionally NOT loaded:
+     it spawns its own getUserMedia call without our chosen deviceId, which
+     overrides external-webcam selection. We drive frames manually instead. -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<!-- MediaPipe Selfie Segmentation (used only when background replacement is enabled). -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
 
 <script>
 "use strict";
@@ -435,77 +488,182 @@ async function enumerateCameras() {
   if (settings.cameraId && cams.find(c => c.deviceId === settings.cameraId)) {
     sel.value = settings.cameraId;
   }
+  const qSel = document.getElementById('quality-select');
+  if (qSel && settings.quality) qSel.value = settings.quality;
+  const tSel = document.getElementById('theme-select');
+  if (tSel && settings.theme && THEMES[settings.theme]) tSel.value = settings.theme;
+  const bSel = document.getElementById('bg-select');
+  if (bSel && settings.bgMode) {
+    bSel.value = settings.bgMode;
+    bSel.dispatchEvent(new Event('change'));
+  }
+  const eSel = document.getElementById('bg-edge-select');
+  if (eSel && settings.bgEdge) eSel.value = settings.bgEdge;
 }
 
 // ============================================================
 //  START / STOP CAMERA + HANDS
 // ============================================================
+function qualityPreset(name) {
+  switch (name) {
+    case 'fast':     return { complexity: 0, smoothAlpha: 0.80, width: 640,  height: 480, frameRate: 30 };
+    case 'accurate': return { complexity: 1, smoothAlpha: 0.40, width: 1280, height: 720, frameRate: 30 };
+    case 'smooth':
+    default:         return { complexity: 1, smoothAlpha: 0.55, width: 1280, height: 720, frameRate: 30 };
+  }
+}
+
+async function tryGetUserMedia(deviceId, preset) {
+  // Try a series of decreasing-strictness constraints. NotReadableError on
+  // external webcams is most often a resolution/framerate mismatch.
+  const attempts = [
+    { video: { deviceId: { exact: deviceId },
+               width:  { ideal: preset.width  },
+               height: { ideal: preset.height },
+               frameRate: { ideal: preset.frameRate } },
+      audio: false },
+    { video: { deviceId: { exact: deviceId },
+               width:  { ideal: 640 }, height: { ideal: 480 } },
+      audio: false },
+    { video: { deviceId: { exact: deviceId } }, audio: false },
+  ];
+  let lastErr = null;
+  for (const c of attempts) {
+    try { return await navigator.mediaDevices.getUserMedia(c); }
+    catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
 async function startCameraAndHands() {
   const sel = document.getElementById('camera-select');
   const deviceId = sel.value;
   if (!deviceId) { alert('Pick a camera first.'); return false; }
   state.cameraId = deviceId;
-  saveSettings({ ...loadSettings(), cameraId: deviceId });
+
+  const qSel = document.getElementById('quality-select');
+  state.trackingQuality = qSel ? qSel.value : 'smooth';
+  saveSettings({ ...loadSettings(), cameraId: deviceId, quality: state.trackingQuality });
+  const preset = qualityPreset(state.trackingQuality);
+  state.smoothAlpha = preset.smoothAlpha;
+
+  // Stop any prior frame loop + stream, then wait a beat so Windows releases the device.
+  state.handProcessingActive = false;
+  if (state.mediaStream) {
+    state.mediaStream.getTracks().forEach(t => t.stop());
+    state.mediaStream = null;
+    await new Promise(r => setTimeout(r, 350));
+  }
+  state.handHistory = {};   // reset smoothing buffer for new camera
 
   const video = document.getElementById('video');
   try {
-    if (state.mediaStream) state.mediaStream.getTracks().forEach(t => t.stop());
-    state.mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { deviceId: { exact: deviceId }, width: 1280, height: 720 },
-      audio: false
-    });
+    state.mediaStream = await tryGetUserMedia(deviceId, preset);
     video.srcObject = state.mediaStream;
     await new Promise(res => video.onloadedmetadata = res);
     await video.play();
   } catch (e) {
-    alert('Could not start camera: ' + e.message);
+    alert(
+      `Could not start the selected camera (${e.name}: ${e.message}).\n\n` +
+      `Things to try:\n` +
+      `• Make sure no other app (Teams, Zoom, OBS) is using it. Browser tabs count too — close any other tab that may have opened it.\n` +
+      `• Unplug and replug the USB webcam, then click Refresh List.\n` +
+      `• In Windows Settings → Privacy & security → Camera, confirm browser access is allowed.\n` +
+      `• Lower Tracking quality to "Fast" and try again.`
+    );
     return false;
   }
 
-  // MediaPipe Hands
-  if (!state.hands) {
+  // Build MediaPipe Hands (recreate if quality / complexity changed)
+  if (!state.hands || state.handsComplexity !== preset.complexity) {
+    if (state.hands) { try { state.hands.close(); } catch {} }
     state.hands = new Hands({
       locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
     });
     state.hands.setOptions({
       maxNumHands: 2,
-      modelComplexity: 0,           // 0 = faster, 1 = more accurate
+      modelComplexity: preset.complexity,
       minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.5
+      minTrackingConfidence: 0.55
     });
     state.hands.onResults(onHandResults);
+    state.handsComplexity = preset.complexity;
   }
 
-  // Stop any prior camera helper, start a new one bound to this video
-  if (state.camera) { state.camera.stop(); state.camera = null; }
-  state.camera = new Camera(video, {
-    onFrame: async () => { await state.hands.send({ image: video }); },
-    width: 640, height: 480
-  });
-  state.camera.start();
+  // Build SelfieSegmentation lazily (only if user picked a bg replacement mode).
+  // Rebuild if the user changed edge quality (model 0 = general/crisp, 1 = landscape/fast).
+  const edgeQ = (document.getElementById('bg-edge-select') || {}).value
+              || loadSettings().bgEdge || 'fast';
+  const wantedModel = (edgeQ === 'sharp') ? 0 : 1;
+  if (state.bgMode !== 'off' && typeof SelfieSegmentation !== 'undefined' &&
+      (!state.segmenter || state.segmenterModel !== wantedModel)) {
+    if (state.segmenter) { try { state.segmenter.close(); } catch {} }
+    state.segmenter = new SelfieSegmentation({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${f}`
+    });
+    state.segmenter.setOptions({ modelSelection: wantedModel });
+    state.segmenter.onResults(onSegmentationResults);
+    state.segmenterModel = wantedModel;
+  }
+  applyBgVisibility();
+
+  // Manual frame pump — uses OUR stream, no extra getUserMedia call.
+  state.handProcessingActive = true;
+  let inflight = false;
+  async function pump() {
+    if (!state.handProcessingActive) return;
+    if (!inflight && video.readyState >= 2) {
+      inflight = true;
+      try {
+        if (state.bgMode !== 'off' && state.segmenter) {
+          await state.segmenter.send({ image: video });
+        }
+        await state.hands.send({ image: video });
+      } catch (e) { console.warn('frame pump error:', e); }
+      inflight = false;
+    }
+    requestAnimationFrame(pump);
+  }
+  pump();
   return true;
 }
 
 function onHandResults(results) {
   const pts = [];
   let fist = false;
+  const alpha = state.smoothAlpha || 0.55;        // EMA weight on new sample
+  const now = performance.now();
+  state.handHistory = state.handHistory || {};
+  const hist = state.handHistory;
+
+  // Smooth a single landmark and return mirrored {x,y}.
+  function smooth(key, lm) {
+    const prev = hist[key];
+    const fresh = prev && (now - prev.t < 220);
+    const sx = fresh ? prev.x * (1 - alpha) + lm.x * alpha : lm.x;
+    const sy = fresh ? prev.y * (1 - alpha) + lm.y * alpha : lm.y;
+    hist[key] = { x: sx, y: sy, t: now };
+    return { x: 1 - sx, y: sy };   // mirror x for selfie view
+  }
+
   if (results.multiHandLandmarks) {
     for (let h = 0; h < results.multiHandLandmarks.length; h++) {
       const lm = results.multiHandLandmarks[h];
-      // landmark 8 = index fingertip, 4 = thumb tip, 12 = middle tip
-      // We push fingertip plus the palm centroid as hit points.
-      const tip = lm[8];
-      const middle = lm[12];
-      const palm = lm[9];
-      pts.push({ x: 1 - tip.x, y: tip.y, kind: 'tip' });    // mirror x
-      pts.push({ x: 1 - middle.x, y: middle.y, kind: 'tip' });
-      pts.push({ x: 1 - palm.x, y: palm.y, kind: 'palm' });
+      const tip    = smooth(`${h}_8`,  lm[8]);
+      const middle = smooth(`${h}_12`, lm[12]);
+      const palm   = smooth(`${h}_9`,  lm[9]);
+      pts.push({ ...tip,    kind: 'tip' });
+      pts.push({ ...middle, kind: 'tip' });
+      pts.push({ ...palm,   kind: 'palm' });
 
-      // Fist heuristic: all finger tips below their PIP joints (in y)
       const closedCount = [8,12,16,20].filter(i => lm[i].y > lm[i-2].y).length;
       if (closedCount >= 3) fist = true;
     }
   }
+
+  // Prune stale history entries so memory doesn't grow.
+  for (const k in hist) if (now - hist[k].t > 1500) delete hist[k];
+
   state.handPoints = pts;
   state.fistClosed = fist;
   if (!state.handsReady) {
@@ -726,9 +884,298 @@ function skipPregame(g) {
 }
 
 // ============================================================
+//  THEMES
+// ============================================================
+const THEMES = {
+  default: {
+    label: 'Default',
+    bodyGradient: 'linear-gradient(135deg, #0f2027, #203a43, #2c5364)',
+    accent: '#ffd166', accent2: '#ef476f',
+    balloonColors: ['#ef476f','#ffd166','#06d6a0','#118ab2','#9b5de5','#fb5607'],
+    decoration: null,
+    videoFilter: 'none',
+    bgIcons: [],
+  },
+  bluey: {
+    label: 'Bluey',
+    bodyGradient: 'linear-gradient(135deg, #4a90e2, #87ceeb, #ffd89b)',
+    accent: '#ffd89b', accent2: '#f5a623',
+    balloonColors: ['#3a78c2','#f5a623','#79b8e8','#ff8c5a','#4fbfa8','#ffd89b'],
+    decoration: 'puppy',
+    videoFilter: 'brightness(1.05) saturate(1.15) hue-rotate(-5deg)',
+    bgIcons: ['🐾','🦴','💙','🐶'],
+  },
+  hellokitty: {
+    label: 'Hello Kitty',
+    bodyGradient: 'linear-gradient(135deg, #ffc0cb, #ffe4ec, #ff8fb3)',
+    accent: '#ff69b4', accent2: '#ff1493',
+    balloonColors: ['#ff69b4','#ffb6c1','#ffffff','#ff1493','#ffe4ec','#ffd700'],
+    decoration: 'bow',
+    videoFilter: 'brightness(1.08) saturate(0.95) hue-rotate(15deg)',
+    bgIcons: ['🎀','💗','🌸','🍓'],
+  },
+  peppa: {
+    label: 'Peppa Pig',
+    bodyGradient: 'linear-gradient(180deg, #87ceeb 0%, #b3e0f7 55%, #7cbf3a 55%, #6cb031 100%)',
+    accent: '#ff85a1', accent2: '#d6477a',
+    balloonColors: ['#ff85a1','#ffb3c1','#87ceeb','#7cbf3a','#ffc94a','#f25c8d'],
+    decoration: 'pig',
+    videoFilter: 'brightness(1.05) saturate(1.15)',
+    bgIcons: ['🐷','☁️','🌳','💧'],
+  },
+  pawpatrol: {
+    label: 'Paw Patrol',
+    bodyGradient: 'linear-gradient(135deg, #1e6dc6, #2a9d3b, #fbcb20)',
+    accent: '#fbcb20', accent2: '#d22929',
+    balloonColors: ['#d22929','#1e6dc6','#fbcb20','#2a9d3b','#ffffff','#ff8c2a'],
+    decoration: 'paw',
+    videoFilter: 'brightness(1.05) contrast(1.1) saturate(1.2)',
+    bgIcons: ['🐾','🚓','🚒','🐶','🦴'],
+  },
+  squishmallow: {
+    label: 'Squishmallow',
+    bodyGradient: 'linear-gradient(135deg, #ffd1dc, #c8e6f5, #d6c1f0, #ffe5b4)',
+    accent: '#d6c1f0', accent2: '#ffb3c1',
+    balloonColors: ['#ffc0cb','#b3e0ff','#d6c1f0','#ffe5b4','#c8f7c5','#ffb3c1'],
+    decoration: 'squish',
+    videoFilter: 'brightness(1.07) saturate(0.85)',
+    bgIcons: ['⭐','🌈','💖','✨','☁️'],
+  },
+};
+state.theme = THEMES[loadSettings().theme] || THEMES.default;
+
+function applyTheme(name) {
+  const t = THEMES[name] || THEMES.default;
+  state.theme = t;
+  document.body.style.background = t.bodyGradient;
+  const root = document.documentElement;
+  root.style.setProperty('--accent', t.accent);
+  root.style.setProperty('--accent2', t.accent2);
+  const video = document.getElementById('video');
+  if (video) video.style.filter = t.videoFilter;
+  saveSettings({ ...loadSettings(), theme: name });
+  state.wallpaperIcons = null;   // regenerate next wallpaper draw
+  initBgParticles();
+}
+
+function initBgParticles() {
+  state.bgParticles = [];
+  const icons = state.theme && state.theme.bgIcons;
+  if (!icons || icons.length === 0) return;
+  const N = 16;
+  for (let i = 0; i < N; i++) {
+    state.bgParticles.push({
+      icon: icons[Math.floor(Math.random() * icons.length)],
+      x: Math.random(), y: Math.random(),
+      size: 28 + Math.random() * 32,
+      vy: 0.02 + Math.random() * 0.04,           // fraction of screen per second
+      vx: (Math.random() - 0.5) * 0.01,
+      rot: Math.random() * Math.PI * 2,
+      vr: (Math.random() - 0.5) * 0.4,
+      alpha: 0.18 + Math.random() * 0.22,
+    });
+  }
+}
+
+function drawBgParticles(ctx, dt, w, h) {
+  if (!state.bgParticles || state.bgParticles.length === 0) return;
+  for (const p of state.bgParticles) {
+    p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt;
+    if (p.y > 1.1) p.y = -0.1;
+    if (p.x < -0.1) p.x = 1.1;
+    if (p.x > 1.1)  p.x = -0.1;
+    ctx.save();
+    ctx.translate(p.x * w, p.y * h);
+    ctx.rotate(p.rot);
+    ctx.globalAlpha = p.alpha;
+    ctx.font = `${p.size * devicePixelRatio}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(p.icon, 0, 0);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawBalloonDecoration(ctx, b) {
+  const kind = state.theme && state.theme.decoration;
+  if (!kind) return;
+  ctx.save();
+  if (kind === 'squish' || kind === 'puppy') {
+    // round cute face
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.arc(b.x - b.r * 0.28, b.y - b.r * 0.05, b.r * 0.075, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x + b.r * 0.28, b.y - b.r * 0.05, b.r * 0.075, 0, Math.PI*2); ctx.fill();
+    // eye highlights
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(b.x - b.r * 0.26, b.y - b.r * 0.08, b.r * 0.025, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x + b.r * 0.30, b.y - b.r * 0.08, b.r * 0.025, 0, Math.PI*2); ctx.fill();
+    // smile
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(b.x, b.y + b.r * 0.10, b.r * 0.22, 0.25, Math.PI - 0.25); ctx.stroke();
+    // cheek blush
+    ctx.fillStyle = 'rgba(255, 90, 130, 0.45)';
+    ctx.beginPath(); ctx.arc(b.x - b.r * 0.45, b.y + b.r * 0.12, b.r * 0.10, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x + b.r * 0.45, b.y + b.r * 0.12, b.r * 0.10, 0, Math.PI*2); ctx.fill();
+  } else if (kind === 'bow') {
+    const bx = b.x, by = b.y - b.r * 0.92;
+    ctx.fillStyle = '#ff1493';
+    ctx.beginPath(); ctx.ellipse(bx - b.r * 0.25, by, b.r * 0.20, b.r * 0.14, -0.3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(bx + b.r * 0.25, by, b.r * 0.20, b.r * 0.14,  0.3, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#c80f74';
+    ctx.beginPath(); ctx.arc(bx, by, b.r * 0.10, 0, Math.PI*2); ctx.fill();
+  } else if (kind === 'paw') {
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.beginPath(); ctx.ellipse(b.x, b.y + b.r * 0.10, b.r * 0.24, b.r * 0.20, 0, 0, Math.PI*2); ctx.fill();
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.arc(b.x + i * b.r * 0.22, b.y - b.r * 0.22, b.r * 0.10, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.beginPath(); ctx.arc(b.x - b.r * 0.38, b.y - b.r * 0.05, b.r * 0.08, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x + b.r * 0.38, b.y - b.r * 0.05, b.r * 0.08, 0, Math.PI*2); ctx.fill();
+  } else if (kind === 'pig') {
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.arc(b.x - b.r * 0.25, b.y - b.r * 0.22, b.r * 0.06, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x + b.r * 0.25, b.y - b.r * 0.22, b.r * 0.06, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#f25c8d';
+    ctx.beginPath(); ctx.ellipse(b.x, b.y + b.r * 0.08, b.r * 0.22, b.r * 0.18, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#a0345f';
+    ctx.beginPath(); ctx.arc(b.x - b.r * 0.08, b.y + b.r * 0.08, b.r * 0.04, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x + b.r * 0.08, b.y + b.r * 0.08, b.r * 0.04, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ============================================================
+//  BACKGROUND REPLACEMENT  (MediaPipe Selfie Segmentation)
+// ============================================================
+state.bgMode = loadSettings().bgMode || 'off';
+state.bgColor = loadSettings().bgColor || '#306b9a';
+
+function drawImageCover(ctx, img, w, h) {
+  if (!img || !img.width) return;
+  const sa = img.width / img.height, da = w / h;
+  let sw, sh, sx, sy;
+  if (sa > da) { sh = img.height; sw = sh * da; sx = (img.width - sw) / 2; sy = 0; }
+  else         { sw = img.width;  sh = sw / da; sx = 0; sy = (img.height - sh) / 2; }
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+}
+
+function drawWallpaper(ctx, w, h, mode) {
+  const t = state.theme || THEMES.default;
+  if (mode === 'solid') {
+    ctx.fillStyle = state.bgColor || '#306b9a';
+    ctx.fillRect(0, 0, w, h); return;
+  }
+  if (mode === 'custom') {
+    if (state.customWallpaperImg && state.customWallpaperImg.complete) {
+      drawImageCover(ctx, state.customWallpaperImg, w, h);
+    } else {
+      ctx.fillStyle = '#222'; ctx.fillRect(0, 0, w, h);
+    }
+    return;
+  }
+  // themed
+  if (t.label === 'Peppa Pig') {
+    const sky = ctx.createLinearGradient(0, 0, 0, h * 0.6);
+    sky.addColorStop(0, '#87ceeb'); sky.addColorStop(1, '#b3e0f7');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h * 0.6);
+    const grass = ctx.createLinearGradient(0, h * 0.6, 0, h);
+    grass.addColorStop(0, '#7cbf3a'); grass.addColorStop(1, '#5fa029');
+    ctx.fillStyle = grass; ctx.fillRect(0, h * 0.6, w, h * 0.4);
+  } else {
+    const grad = ctx.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0, t.accent); grad.addColorStop(1, t.accent2);
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+  }
+  // scatter theme icons (deterministic per session)
+  if (t.bgIcons && t.bgIcons.length) {
+    if (!state.wallpaperIcons) {
+      state.wallpaperIcons = [];
+      for (let i = 0; i < 14; i++) {
+        state.wallpaperIcons.push({
+          icon: t.bgIcons[Math.floor(Math.random() * t.bgIcons.length)],
+          x: Math.random(), y: Math.random(),
+          size: 70 + Math.random() * 90,
+          rot: (Math.random() - 0.5) * 0.6,
+          alpha: 0.30 + Math.random() * 0.30,
+        });
+      }
+    }
+    for (const p of state.wallpaperIcons) {
+      ctx.save();
+      ctx.translate(p.x * w, p.y * h);
+      ctx.rotate(p.rot);
+      ctx.globalAlpha = p.alpha;
+      ctx.font = `${p.size * devicePixelRatio}px serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(p.icon, 0, 0);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function onSegmentationResults(results) {
+  const c = document.getElementById('bg-canvas');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const w = c.width, h = c.height;
+
+  // Feather radius scales with frame size — ~0.4% of width keeps edges soft
+  // at any resolution without becoming a halo.
+  const featherPx = Math.max(2, Math.round(w * 0.004));
+
+  // Step 1: draw the person, mirrored for selfie view, with a soft mask edge.
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.scale(-1, 1); ctx.translate(-w, 0);
+  // Soft mask: blur the segmentation mask before using it as a key.
+  ctx.filter = `blur(${featherPx}px)`;
+  ctx.drawImage(results.segmentationMask, 0, 0, w, h);
+  ctx.filter = 'none';
+  // Keep only video pixels where the (feathered) mask is opaque.
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.drawImage(results.image, 0, 0, w, h);
+  ctx.restore();
+
+  // Step 2: paint the background BEHIND the person.
+  ctx.globalCompositeOperation = 'destination-over';
+  if (state.bgMode === 'blur') {
+    ctx.save();
+    ctx.scale(-1, 1); ctx.translate(-w, 0);
+    ctx.filter = 'blur(18px)';
+    ctx.drawImage(results.image, 0, 0, w, h);
+    ctx.filter = 'none';
+    ctx.restore();
+  } else {
+    drawWallpaper(ctx, w, h, state.bgMode);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function applyBgVisibility() {
+  const video = document.getElementById('video');
+  const bg = document.getElementById('bg-canvas');
+  if (!video || !bg) return;
+  if (state.bgMode === 'off') {
+    video.style.opacity = '0.55';
+    bg.style.display = 'none';
+  } else {
+    video.style.opacity = '0';
+    bg.style.display = 'block';
+  }
+}
+
+// ============================================================
 //  GAME
 // ============================================================
 const BALLOON_COLORS = ['#ef476f','#ffd166','#06d6a0','#118ab2','#9b5de5','#fb5607'];
+function currentBalloonColors() {
+  return (state.theme && state.theme.balloonColors) || BALLOON_COLORS;
+}
 
 function levelConfig(level) {
   // tune curve: more balloons, faster fall, more spawn rate per level
@@ -767,21 +1214,25 @@ function startGame() {
 }
 
 function resizeCanvas() {
-  const canvas = document.getElementById('game-canvas');
-  canvas.width = canvas.clientWidth * devicePixelRatio;
-  canvas.height = canvas.clientHeight * devicePixelRatio;
+  for (const id of ['game-canvas', 'bg-canvas']) {
+    const c = document.getElementById(id);
+    if (!c) continue;
+    c.width = c.clientWidth * devicePixelRatio;
+    c.height = c.clientHeight * devicePixelRatio;
+  }
 }
 window.addEventListener('resize', resizeCanvas);
 
 function spawnBalloon(g, cfg, w) {
   const r = 38 + Math.random() * 26;
+  const palette = currentBalloonColors();
   g.balloons.push({
     x: r + Math.random() * (w - 2*r),
     y: -r,
     r,
     vy: cfg.fallSpeedMin + Math.random() * (cfg.fallSpeedMax - cfg.fallSpeedMin),
     vx: (Math.random() - 0.5) * 30,
-    color: BALLOON_COLORS[Math.floor(Math.random() * BALLOON_COLORS.length)],
+    color: palette[Math.floor(Math.random() * palette.length)],
     sway: Math.random() * Math.PI * 2,
   });
 }
@@ -861,6 +1312,9 @@ function gameLoop(now) {
     if (p.age > 0.5) g.pops.splice(i, 1);
   }
 
+  // themed floating background icons (behind balloons)
+  drawBgParticles(ctx, dt, w, h);
+
   // balloons
   for (const b of g.balloons) drawBalloon(ctx, b);
   for (const p of g.pops) drawPop(ctx, p);
@@ -886,7 +1340,7 @@ function popBalloon(g, b, i, cfg) {
   g.balloons.splice(i, 1);
   g.score += cfg.pointsPerBalloon;
   g.pops.push({ x: b.x, y: b.y, r: b.r, color: b.color, age: 0 });
-  playPop(BALLOON_COLORS.indexOf(b.color));
+  playPop(currentBalloonColors().indexOf(b.color));
   updateHUD();
 }
 
@@ -915,6 +1369,8 @@ function drawBalloon(ctx, b) {
   ctx.closePath();
   ctx.fillStyle = shadeColor(b.color, -30);
   ctx.fill();
+  // themed decoration (face, bow, paw, etc.)
+  drawBalloonDecoration(ctx, b);
 }
 
 function drawPop(ctx, p) {
@@ -1028,6 +1484,72 @@ document.addEventListener('DOMContentLoaded', () => {
   if (location.protocol === 'file:') {
     document.getElementById('protocol-warning').style.display = 'block';
   }
+
+  // Apply saved theme (or default) so the page paints in the right palette immediately.
+  const savedTheme = loadSettings().theme;
+  applyTheme(savedTheme && THEMES[savedTheme] ? savedTheme : 'default');
+  const tSel = document.getElementById('theme-select');
+  if (tSel) {
+    if (savedTheme && THEMES[savedTheme]) tSel.value = savedTheme;
+    tSel.addEventListener('change', () => applyTheme(tSel.value));
+  }
+
+  // Background-replacement controls
+  const bgSel = document.getElementById('bg-select');
+  const bgColor = document.getElementById('bg-color');
+  const bgFile = document.getElementById('bg-file');
+  const bgFileName = document.getElementById('bg-file-name');
+
+  // Restore saved custom wallpaper image (if any)
+  const savedDataUrl = loadSettings().bgDataUrl;
+  if (savedDataUrl) {
+    const img = new Image();
+    img.onload = () => { state.customWallpaperImg = img; };
+    img.src = savedDataUrl;
+  }
+  if (loadSettings().bgColor) bgColor.value = loadSettings().bgColor;
+
+  bgSel.addEventListener('change', () => {
+    state.bgMode = bgSel.value;
+    bgColor.style.display = bgSel.value === 'solid'  ? 'inline-block' : 'none';
+    bgFile.style.display  = bgSel.value === 'custom' ? 'inline-block' : 'none';
+    bgFileName.textContent = (bgSel.value === 'custom' && state.customWallpaperImg) ? 'using saved image' : '';
+    saveSettings({ ...loadSettings(), bgMode: bgSel.value });
+  });
+
+  bgColor.addEventListener('input', () => {
+    state.bgColor = bgColor.value;
+    saveSettings({ ...loadSettings(), bgColor: bgColor.value });
+  });
+
+  const bgEdge = document.getElementById('bg-edge-select');
+  if (loadSettings().bgEdge) bgEdge.value = loadSettings().bgEdge;
+  bgEdge.addEventListener('change', () => {
+    saveSettings({ ...loadSettings(), bgEdge: bgEdge.value });
+    // Force segmenter rebuild on next camera start.
+    if (state.segmenter) { try { state.segmenter.close(); } catch {} state.segmenter = null; state.segmenterModel = null; }
+  });
+
+  bgFile.addEventListener('change', () => {
+    const f = bgFile.files && bgFile.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const dataUrl = ev.target.result;
+      const img = new Image();
+      img.onload = () => {
+        state.customWallpaperImg = img;
+        bgFileName.textContent = f.name;
+        try {
+          saveSettings({ ...loadSettings(), bgDataUrl: dataUrl });
+        } catch (e) {
+          alert('Image is too large to save between sessions — it will work for this session only.');
+        }
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(f);
+  });
 
   renderProfiles();
   renderContinueBanner();
